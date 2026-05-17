@@ -586,7 +586,6 @@
     const API_URL = "https://vehicle-api.tdgwkts.workers.dev/exec";
     
     async function callAPI(action, extraData = {}) {
-        // 自動帶入 session（如果存在）
         const payload = JSON.stringify({ 
             action, 
             session: currentSession || null,
@@ -632,16 +631,13 @@
             return true;
         }
         
-        // 如果尚未登入，直接使用預設值
         if (!currentSession || !currentSession.userId) {
-            console.log("尚未登入，使用預設配額");
             useDefaultQuota();
             return false;
         }
         
         try {
             const result = await callAPI('getMidnightQuota');
-            
             if (result.success && result.data && result.data.length > 0) {
                 const quotaData = {};
                 const districtsList = [];
@@ -655,7 +651,8 @@
                 console.log("✅ 從 R2 載入凌晨配額:", midnightQuotaDistrictsList.length, "個區域");
                 return true;
             } else {
-                throw new Error("無配額資料");
+                useDefaultQuota();
+                return false;
             }
         } catch (error) {
             console.error("載入配額失敗，使用預設值:", error);
@@ -684,10 +681,11 @@
         const limit = getDistrictQuotaLimit(stdDistrict);
         if (limit === null) return { allowed: false, message: `❌ 區域「${district}」沒有設定凌晨配額上限` };
         
+        const today = new Date().toISOString().split('T')[0];
         let currentCount = allVehicles.filter(v => 
             standardizeDistrict(v.district) === stdDistrict && 
             v.midnight === 'Y' && 
-            (v.expiryDate?.split('T')[0] || '') >= new Date().toISOString().split('T')[0]
+            (v.expiryDate?.split('T')[0] || '') >= today
         ).length;
         
         if (excludePlate) {
@@ -733,7 +731,10 @@
     function safeSplitDate(dateStr) {
         if (!dateStr) return '-';
         if (typeof dateStr === 'string') {
-            return dateStr.split('T')[0];
+            if (dateStr.match(/^\d{4}-\d{2}-\d{2}/)) {
+                return dateStr.split('T')[0];
+            }
+            return dateStr;
         }
         if (dateStr instanceof Date) {
             return dateStr.toISOString().split('T')[0];
@@ -741,37 +742,62 @@
         return '-';
     }
     
+    function escapeHtml(str) { 
+        if (str === null || str === undefined) return ""; 
+        if (typeof str !== 'string') str = String(str);
+        return str.replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        });
+    }
+    
     function renderCurrentPageData() {
         const start = (currentPage - 1) * rowsPerPage;
         const pageData = currentFilteredDataForPaging.slice(start, start + rowsPerPage);
         const tbody = document.getElementById('vehicleList');
         const recordSpan = document.getElementById('recordCount');
-        if(!pageData.length){ 
-            tbody.innerHTML='<tr><td colspan="13" class="text-center text-muted">暫無符合車輛</td></tr>';
-            if(recordSpan) recordSpan.innerText="0 筆"; 
-            renderPagination(0,1);
+        
+        if (!pageData || pageData.length === 0) { 
+            tbody.innerHTML = '<tr><td colspan="13" class="text-center text-muted">暫無符合車輛</td></tr>'; 
+            if (recordSpan) recordSpan.innerText = "0 筆"; 
+            renderPagination(0, 1);
             return; 
         }
+        
         tbody.innerHTML = pageData.map(v => { 
+            const plate = v.plate || '';
+            const pgvw = v.pgvw !== undefined && v.pgvw !== null ? v.pgvw : '';
             const startDate = safeSplitDate(v.startDate);
             const expiry = safeSplitDate(v.expiryDate);
+            const vehicleDailyLimit = v.vehicleDailyLimit || 5;
+            const midnight = v.midnight === 'Y' ? '✅ 是' : '❌ 否';
+            const district = v.district || '';
+            const districtDailyLimit = v.districtDailyLimit || 0;
+            const createdBy = v.createdBy || '-';
+            const contactPerson = v.contactPerson || '-';
+            const contactTel = v.contactTel || '-';
+            const contactEmail = v.contactEmail || '-';
+            
             return `<tr>
-                        <td><strong>${escapeHtml(v.plate)}</strong></td>
-                        <td>${v.pgvw}</td>
+                        <td><strong>${escapeHtml(plate)}</strong></td>
+                        <td>${pgvw}</td>
                         <td>${startDate}</td>
                         <td>${expiry}</td>
-                        <td>${v.vehicleDailyLimit||5}</td>
-                        <td>${v.midnight==='Y'?'✅ 是':'❌ 否'}</td>
-                        <td>${escapeHtml(v.district)}</td>
-                        <td>${v.districtDailyLimit||0}</td>
-                        <td>${escapeHtml(v.createdBy)||'-'}</td>
-                        <td>${escapeHtml(v.contactPerson)||'-'}</td>
-                        <td>${escapeHtml(v.contactTel)||'-'}</td>
-                        <td>${escapeHtml(v.contactEmail)||'-'}</td>
-                        <td>${currentRole === 'fehd' ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteVehicle('${v.plate.replace(/'/g, "\\'")}')">刪除</button>` : '🔍 唯讀'}</td>
-                    </tr>`; 
+                        <td>${vehicleDailyLimit}</td>
+                        <td>${midnight}</td>
+                        <td>${escapeHtml(district)}</td>
+                        <td>${districtDailyLimit}</td>
+                        <td>${escapeHtml(createdBy)}</td>
+                        <td>${escapeHtml(contactPerson)}</td>
+                        <td>${escapeHtml(contactTel)}</td>
+                        <td>${escapeHtml(contactEmail)}</td>
+                        <td>${currentRole === 'fehd' ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteVehicle('${escapeHtml(plate).replace(/'/g, "\\'")}')">刪除</button>` : '🔍 唯讀'}</td>
+                    </tr>`;
         }).join('');
-        if(recordSpan) recordSpan.innerText = `${currentFilteredDataForPaging.length} 筆`;
+        
+        if (recordSpan) recordSpan.innerText = `${currentFilteredDataForPaging.length} 筆`;
         renderPagination(currentFilteredDataForPaging.length, currentPage);
     }
     
@@ -880,7 +906,10 @@
     }
     
     async function loadVehicles(forceRefresh = false) {
-        if (!currentSession) return;
+        if (!currentSession) {
+            console.log("未登入，無法載入車輛");
+            return;
+        }
         const cacheKey = 'vehicles_cache_' + currentSession.userId;
         const cached = localStorage.getItem(cacheKey);
         
@@ -891,6 +920,7 @@
                 filterTable();
                 updateMidnightQuotaPanel(vehiclesData, currentUserViewDistricts);
                 updateContactPanel();
+                console.log("從快取載入車輛:", vehiclesData.length, "筆");
             } catch(e) { console.warn("緩存解析失敗", e); }
         }
         
@@ -902,6 +932,7 @@
                 filterTable();
                 updateMidnightQuotaPanel(vehiclesData, currentUserViewDistricts);
                 updateContactPanel();
+                console.log("從 API 載入車輛:", vehiclesData.length, "筆");
             } else if (!cached) {
                 document.getElementById('vehicleList').innerHTML = '<tr><td colspan="13" class="text-center text-danger">無法載入資料</td></tr>';
             }
@@ -914,7 +945,6 @@
     }
     
     async function initByRole() {
-        // 先使用預設配額（避免未登入時呼叫 API）
         useDefaultQuota();
         
         let urlRole = getUrlParameter('role');
@@ -937,40 +967,46 @@
         const yyyy = today.getFullYear(), mm = String(today.getMonth() + 1).padStart(2,'0'), dd = String(today.getDate()).padStart(2,'0');
         const startDateInput = document.getElementById('startDate');
         if (startDateInput) startDateInput.value = `${yyyy}-${mm}-${dd}`;
-        await loadUserList();
         
-        // 初始化 Modal
-        uploadModal = new bootstrap.Modal(document.getElementById('uploadModal'));
-    }
-    
-    function showLoading(show) { 
-        const loader = document.getElementById('loadingOverlay'); 
-        if(loader) loader.style.display = show ? 'flex' : 'none'; 
-    }
-    
-    async function loadUserList() {
-        const cacheKey = 'system_users_cache';
-        const cachedUsers = localStorage.getItem(cacheKey);
+        // 載入用戶列表（從快取）
+        const cachedUsers = localStorage.getItem('system_users_cache');
         if (cachedUsers) {
             try {
                 renderUserDropdown(JSON.parse(cachedUsers));
             } catch(e) { console.warn(e); }
+        } else {
+            // 預設顯示 WKTS
+            const select = document.getElementById('userId');
+            if (select) {
+                select.innerHTML = '<option value="">-- 請選擇用戶 --</option><option value="WKTS">WKTS</option>';
+            }
         }
+        
+        // 嘗試背景載入用戶列表
         try {
             const result = await callAPI('getUserList');
             if (result.success && result.users) {
-                localStorage.setItem(cacheKey, JSON.stringify(result.users));
-                if (!cachedUsers) renderUserDropdown(result.users);
+                localStorage.setItem('system_users_cache', JSON.stringify(result.users));
+                renderUserDropdown(result.users);
             }
-        } catch (err) { console.error("背景載入用戶列表錯誤", err); }
+        } catch (err) { 
+            console.error("背景載入用戶列表錯誤:", err); 
+        }
+        
+        uploadModal = new bootstrap.Modal(document.getElementById('uploadModal'));
     }
-
+    
     function renderUserDropdown(users) {
         const select = document.getElementById('userId');
         if (!select) return;
         select.innerHTML = '<option value="">-- 請選擇用戶 --</option>';
         const filteredUsers = users.filter(u => currentRole === 'fehd' ? (u.role === '區域主管' || u.role === '超級管理員') : (u.role === '轉運站職員' || u.role === '超級管理員'));
         filteredUsers.forEach(u => { select.innerHTML += `<option value="${u.id}">${u.id}</option>`; });
+    }
+    
+    function showLoading(show) { 
+        const loader = document.getElementById('loadingOverlay'); 
+        if(loader) loader.style.display = show ? 'flex' : 'none'; 
     }
     
     // ======================= 核心登入函數 =======================
@@ -1009,11 +1045,11 @@
             if (result.initialVehicles && result.initialVehicles.length > 0) {
                 vehiclesData = result.initialVehicles;
                 localStorage.setItem('vehicles_cache_' + currentSession.userId, JSON.stringify(vehiclesData));
+                console.log("載入車輛:", vehiclesData.length, "筆");
             } else {
                 vehiclesData = [];
             }
             
-            // 登入成功後重新載入配額（從 R2）
             await loadMidnightQuotaFromR2(true);
             
             document.getElementById('loginPage').style.display = 'none';
@@ -1029,17 +1065,14 @@
             if (result.session.viewDistricts === "all") {
                 currentUserViewDistricts = "all";
                 document.getElementById('viewHint').innerHTML = `🔍 您可查看的區域：<br><strong>所有區域 (超級管理員)</strong>`;
-                document.getElementById('viewHint').style.lineHeight = "1.5";
             } else {
                 currentUserViewDistricts = result.session.viewDistricts || [];
                 const viewText = currentUserViewDistricts.join("、");
                 document.getElementById('viewHint').innerHTML = `🔍 您可查看的區域：<br><strong>${viewText}</strong>`;
-                document.getElementById('viewHint').style.lineHeight = "1.5";
             }
             document.getElementById('viewHint').style.wordWrap = "break-word";
             document.getElementById('viewHint').style.whiteSpace = "normal";
             
-            // 顯示/隱藏超級管理員上傳按鈕
             const uploadBtn = document.getElementById('uploadToR2Btn');
             if (result.session.userId === 'WKTS' || result.session.role === '超級管理員') {
                 uploadBtn.style.display = 'block';
@@ -1053,24 +1086,24 @@
                     districtSelect.innerHTML = '<option value="">請選擇</option>';
                     if (userOwnDistrict) {
                         districtSelect.innerHTML += `<option value="${userOwnDistrict}">${userOwnDistrict}</option>`;
-                        districtSelect.disabled = false;
                     } else if (currentUserViewDistricts === 'all') {
                         midnightQuotaDistrictsList.forEach(d => { 
                             districtSelect.innerHTML += `<option value="${d}">${d}</option>`; 
                         });
-                        districtSelect.disabled = false;
                     } else if (Array.isArray(currentUserViewDistricts) && currentUserViewDistricts.length > 0) {
                         currentUserViewDistricts.forEach(d => {
                             districtSelect.innerHTML += `<option value="${d}">${d}</option>`;
                         });
-                        districtSelect.disabled = false;
                     }
+                    districtSelect.disabled = false;
                 }
             }
             
             filterTable();
             updateMidnightQuotaPanel(vehiclesData, currentUserViewDistricts);
             updateContactPanel();
+            
+            // 背景更新最新資料
             loadVehicles(true);
             
         } catch (err) { 
@@ -1088,7 +1121,6 @@
         document.getElementById('mainPage').style.display = 'none'; 
         document.getElementById('password').value = ""; 
         document.getElementById('userId').value = ""; 
-        loadUserList(); 
     }
     
     function sortTable(columnIndex) { 
@@ -1225,7 +1257,6 @@
                     });
                 }
                 
-                // 合併相同車牌+區域，保留有效日期較長的
                 const uniqueMap = new Map();
                 for (const item of dataList) {
                     const key = `${item.plate}|${item.district}`;
@@ -1245,7 +1276,6 @@
                 let validData = mergedDataList.filter(d => d.plate && d.pgvw > 0 && d.expiryDate && d.district);
                 if (!validData.length) { alert("沒有有效的車輛資料"); showLoading(false); return; }
                 
-                // 檢查與現有車輛的重複
                 let finalData = [];
                 for (const newItem of validData) {
                     const existingIndex = vehiclesData.findIndex(v => 
@@ -1262,7 +1292,6 @@
                 
                 if (finalData.length === 0) { alert("沒有新增的車輛資料"); showLoading(false); return; }
                 
-                // 凌晨配額檢查
                 let quotaErrors = [];
                 let tempCheckVehicles = [...vehiclesData];
                 for (let item of finalData) {
@@ -1350,23 +1379,17 @@
     function openUploadModal() {
         const fileInput = document.getElementById('systemExcelFile');
         if (fileInput) fileInput.value = '';
-        
         const progressArea = document.getElementById('uploadProgressArea');
         const sheetStatusList = document.getElementById('sheetStatusList');
         if (progressArea) progressArea.style.display = 'none';
         if (sheetStatusList) sheetStatusList.innerHTML = '';
-        
         if (uploadModal) uploadModal.show();
     }
     
     async function uploadSystemExcel() {
         const fileInput = document.getElementById('systemExcelFile');
         const file = fileInput.files[0];
-        
-        if (!file) {
-            alert("請選擇 Excel 檔案");
-            return;
-        }
+        if (!file) { alert("請選擇 Excel 檔案"); return; }
         
         const progressArea = document.getElementById('uploadProgressArea');
         const sheetStatusList = document.getElementById('sheetStatusList');
@@ -1630,11 +1653,6 @@
         }
     });
     
-    function escapeHtml(str){ 
-        if(!str) return ""; 
-        return str.replace(/[&<>]/g, m=> m==='&'?'&amp;': m==='<'?'&lt;':'&gt;'); 
-    }
-    
     // 註冊全域函數
     window.sortTable = sortTable;
     window.filterTable = filterTable;
@@ -1654,6 +1672,5 @@
     window.downloadSystemTemplate = downloadSystemTemplate;
     
     initByRole();
-</script>
-</body>
+</script></body>
 </html>
