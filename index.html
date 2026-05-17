@@ -672,6 +672,42 @@
         return midnightQuotaMap[standardizeDistrict(district)] !== undefined;
     }
     
+    // ======================= 日期處理函數（支援 Excel 序列數字） =======================
+    function formatDateToYMD(dateValue) {
+        if (!dateValue && dateValue !== 0) return null;
+        
+        // 處理 Excel 序列數字 (例如 46219 -> 2026-07-16)
+        if (typeof dateValue === 'number') {
+            const date = new Date((dateValue - 25569) * 86400 * 1000);
+            if (!isNaN(date.getTime())) {
+                return date.toISOString().split('T')[0];
+            }
+            return null;
+        }
+        
+        // 處理 Date 物件
+        if (dateValue instanceof Date) {
+            return dateValue.toISOString().split('T')[0];
+        }
+        
+        // 處理字串
+        if (typeof dateValue === 'string') {
+            if (dateValue.includes('T')) {
+                return dateValue.split('T')[0];
+            }
+            if (dateValue.match(/^\d{4}-\d{2}-\d{2}/)) {
+                return dateValue;
+            }
+        }
+        
+        return null;
+    }
+    
+    function safeSplitDate(dateValue) {
+        const formatted = formatDateToYMD(dateValue);
+        return formatted || '-';
+    }
+    
     function checkMidnightQuotaViolation(district, setMidnightY, excludePlate, allVehicles) {
         if (setMidnightY !== 'Y') return { allowed: true };
         if (!isDistrictInQuotaTable(district)) {
@@ -682,11 +718,12 @@
         if (limit === null) return { allowed: false, message: `❌ 區域「${district}」沒有設定凌晨配額上限` };
         
         const today = new Date().toISOString().split('T')[0];
-        let currentCount = allVehicles.filter(v => 
-            standardizeDistrict(v.district) === stdDistrict && 
-            v.midnight === 'Y' && 
-            (v.expiryDate?.split('T')[0] || '') >= today
-        ).length;
+        let currentCount = allVehicles.filter(v => {
+            const expiryDateStr = formatDateToYMD(v.expiryDate);
+            return standardizeDistrict(v.district) === stdDistrict && 
+                   v.midnight === 'Y' && 
+                   expiryDateStr && expiryDateStr >= today;
+        }).length;
         
         if (excludePlate) {
             const existing = allVehicles.find(v => v.plate === excludePlate);
@@ -728,20 +765,6 @@
         renderCurrentPageData();
     }
     
-    function safeSplitDate(dateStr) {
-        if (!dateStr) return '-';
-        if (typeof dateStr === 'string') {
-            if (dateStr.match(/^\d{4}-\d{2}-\d{2}/)) {
-                return dateStr.split('T')[0];
-            }
-            return dateStr;
-        }
-        if (dateStr instanceof Date) {
-            return dateStr.toISOString().split('T')[0];
-        }
-        return '-';
-    }
-    
     function escapeHtml(str) { 
         if (str === null || str === undefined) return ""; 
         if (typeof str !== 'string') str = String(str);
@@ -760,7 +783,7 @@
         const recordSpan = document.getElementById('recordCount');
         
         if (!pageData || pageData.length === 0) { 
-            tbody.innerHTML = '<tr><td colspan="13" class="text-center text-muted">暫無符合車輛</td></tr>'; 
+            tbody.innerHTML = '<tr><td colspan="13" class="text-center text-muted">暫無符合車輛</td></tr>';
             if (recordSpan) recordSpan.innerText = "0 筆"; 
             renderPagination(0, 1);
             return; 
@@ -853,8 +876,14 @@
             container.innerHTML = '<div class="small text-muted">尚無車輛資料</div>';
             return;
         }
+        
         const today = new Date().toISOString().split('T')[0];
-        const activeVehicles = vehiclesList.filter(v => (v.expiryDate?.split('T')[0] || '') >= today);
+        
+        // 安全計算活躍車輛（支援 Excel 日期數字）
+        const activeVehicles = vehiclesList.filter(v => {
+            const expiryDateStr = formatDateToYMD(v.expiryDate);
+            return expiryDateStr && expiryDateStr >= today;
+        });
         
         let allowedDistricts = [];
         if (viewDistrictsArray === 'all') {
@@ -968,21 +997,18 @@
         const startDateInput = document.getElementById('startDate');
         if (startDateInput) startDateInput.value = `${yyyy}-${mm}-${dd}`;
         
-        // 載入用戶列表（從快取）
         const cachedUsers = localStorage.getItem('system_users_cache');
         if (cachedUsers) {
             try {
                 renderUserDropdown(JSON.parse(cachedUsers));
             } catch(e) { console.warn(e); }
         } else {
-            // 預設顯示 WKTS
             const select = document.getElementById('userId');
             if (select) {
                 select.innerHTML = '<option value="">-- 請選擇用戶 --</option><option value="WKTS">WKTS</option>';
             }
         }
         
-        // 嘗試背景載入用戶列表
         try {
             const result = await callAPI('getUserList');
             if (result.success && result.users) {
@@ -1102,8 +1128,6 @@
             filterTable();
             updateMidnightQuotaPanel(vehiclesData, currentUserViewDistricts);
             updateContactPanel();
-            
-            // 背景更新最新資料
             loadVehicles(true);
             
         } catch (err) { 
@@ -1324,11 +1348,19 @@
     function formatExcelDate(val){ 
         if(!val) return ""; 
         if(val instanceof Date) return val.toISOString().split('T')[0]; 
-        if(typeof val==='number'){ let date=new Date((val-25569)*86400*1000); return date.toISOString().split('T')[0]; } 
-        let str=String(val).trim(); 
-        if(str.match(/^\d{2}\/\d{2}\/\d{4}$/)) { let parts = str.split('/'); return `${parts[2]}-${parts[1]}-${parts[0]}`; }
+        if(typeof val === 'number'){ 
+            // Excel 序列數字轉換 (1900 日期系統)
+            const date = new Date((val - 25569) * 86400 * 1000);
+            return date.toISOString().split('T')[0];
+        } 
+        let str = String(val).trim(); 
+        if(str.match(/^\d{2}\/\d{2}\/\d{4}$/)) { 
+            let parts = str.split('/'); 
+            return `${parts[2]}-${parts[1]}-${parts[0]}`; 
+        }
         if(str.match(/^\d{4}-\d{2}-\d{2}$/)) return str; 
-        let d=new Date(str); return isNaN(d.getTime())?"":d.toISOString().split('T')[0]; 
+        let d = new Date(str); 
+        return isNaN(d.getTime()) ? "" : d.toISOString().split('T')[0]; 
     }
     
     async function deleteVehicle(plate){ 
@@ -1600,19 +1632,19 @@
         
         if (existingIndex !== -1) {
             const existing = vehiclesData[existingIndex];
-            const existingExpiry = new Date(existing.expiryDate);
-            const newExpiry = new Date(expiryDate);
+            const existingExpiry = formatDateToYMD(existing.expiryDate);
+            const newExpiry = expiryDate;
             
             if (newExpiry > existingExpiry) {
                 const confirmMsg = `⚠️ 車輛 ${plate} (${district}) 已存在！\n` +
-                                   `舊有效日期: ${safeSplitDate(existing.expiryDate)}\n` +
+                                   `舊有效日期: ${existingExpiry || '-'}\n` +
                                    `新有效日期: ${expiryDate}\n\n` +
                                    `新記錄的有效日期較長，將會取代舊記錄。\n是否繼續？`;
                 if (!confirm(confirmMsg)) return;
                 await callAPI('deleteVehicle', { plate });
             } else {
                 alert(`❌ 車輛 ${plate} (${district}) 已存在！\n` +
-                      `現有有效日期: ${safeSplitDate(existing.expiryDate)}\n` +
+                      `現有有效日期: ${existingExpiry || '-'}\n` +
                       `新有效日期: ${expiryDate}\n\n` +
                       `現有記錄的有效日期較長，已保留原有記錄。`);
                 return;
@@ -1672,5 +1704,6 @@
     window.downloadSystemTemplate = downloadSystemTemplate;
     
     initByRole();
-</script></body>
+</script>
+</body>
 </html>
