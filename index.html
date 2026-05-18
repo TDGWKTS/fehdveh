@@ -791,7 +791,7 @@
         const recordSpan = document.getElementById('recordCount');
         
         if (!pageData || pageData.length === 0) { 
-            tbody.innerHTML = '<tr><td colspan="13" class="text-center text-muted">暫無符合車輛</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="13" class="text-center text-muted">暫無符合車輛</td>\n                </tr>'; 
             if (recordSpan) recordSpan.innerText = "0 筆"; 
             renderPagination(0, 1);
             return; 
@@ -808,7 +808,7 @@
             const districtDailyLimit = v.districtDailyLimit || 0;
             const createdBy = v.createdBy || '-';
             const contactPerson = v.contactPerson || '-';
-            const contactTel = v.contactTel || '-';
+            const contactTel = v.contactTel !== undefined && v.contactTel !== null ? v.contactTel : '-';
             const contactEmail = v.contactEmail || '-';
             
             return `<tr>
@@ -822,7 +822,7 @@
                         <td>${districtDailyLimit}</td>
                         <td>${escapeHtml(createdBy)}</td>
                         <td>${escapeHtml(contactPerson)}</td>
-                        <td>${escapeHtml(contactTel)}</td>
+                        <td>${escapeHtml(String(contactTel))}</td>
                         <td>${escapeHtml(contactEmail)}</td>
                         <td>${currentRole === 'fehd' ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteVehicle('${escapeHtml(plate).replace(/'/g, "\\'")}')">刪除</button>` : '🔍 唯讀'}</td>
                     </tr>`;
@@ -868,8 +868,8 @@
                 const latest = districtVehicles[districtVehicles.length - 1];
                 contactBlock.style.display = 'block';
                 document.getElementById('contactPersonDisplay').innerHTML = `<i class="fas fa-user"></i> ${escapeHtml(latest.contactPerson)}`;
-                document.getElementById('contactTelDisplay').innerHTML = `<i class="fas fa-phone"></i> ${escapeHtml(latest.contactTel) || '-'}`;
-                document.getElementById('contactEmailDisplay').innerHTML = `<i class="fas fa-envelope"></i> ${escapeHtml(latest.contactEmail) || '-'}`;
+                document.getElementById('contactTelDisplay').innerHTML = `<i class="fas fa-phone"></i> ${escapeHtml(String(latest.contactTel || '-'))}`;
+                document.getElementById('contactEmailDisplay').innerHTML = `<i class="fas fa-envelope"></i> ${escapeHtml(latest.contactEmail || '-')}`;
                 return;
             }
         }
@@ -1186,81 +1186,85 @@
         filterTable(); 
     }
     
+    // ======================= 過濾和排序函數（完整修正版） =======================
     function filterTable() { 
-    const searchTerm = document.getElementById('searchInput')?.value.toLowerCase() || ''; 
-    let filteredData = [...vehiclesData];
-    
-    if (currentUserViewDistricts !== 'all' && Array.isArray(currentUserViewDistricts) && currentUserViewDistricts.length > 0) {
-        filteredData = filteredData.filter(v => {
-            const stdVehicleDistrict = standardizeDistrict(v.district);
-            return currentUserViewDistricts.some(userDistrict => 
-                standardizeDistrict(userDistrict) === stdVehicleDistrict
-            );
-        });
+        const searchInput = document.getElementById('searchInput');
+        const searchTerm = searchInput ? searchInput.value.toLowerCase().trim() : ''; 
+        let filteredData = [...vehiclesData];
+        
+        if (currentUserViewDistricts !== 'all' && Array.isArray(currentUserViewDistricts) && currentUserViewDistricts.length > 0) {
+            filteredData = filteredData.filter(v => {
+                const stdVehicleDistrict = standardizeDistrict(v.district);
+                return currentUserViewDistricts.some(userDistrict => 
+                    standardizeDistrict(userDistrict) === stdVehicleDistrict
+                );
+            });
+        }
+        
+        if (searchTerm) {
+            filteredData = filteredData.filter(v => {
+                const plate = (v.plate || '').toString().toLowerCase();
+                const district = (v.district || '').toString().toLowerCase();
+                const createdBy = (v.createdBy || '').toString().toLowerCase();
+                const contactPerson = (v.contactPerson || '').toString().toLowerCase();
+                const contactTel = (v.contactTel !== undefined && v.contactTel !== null) ? v.contactTel.toString() : '';
+                const contactEmail = (v.contactEmail || '').toString().toLowerCase();
+                
+                return plate.includes(searchTerm) || 
+                       district.includes(searchTerm) || 
+                       createdBy.includes(searchTerm) ||
+                       contactPerson.includes(searchTerm) ||
+                       contactTel.includes(searchTerm) ||
+                       contactEmail.includes(searchTerm);
+            });
+        }
+        
+        if (isMidnightTopActive && filteredData.length) {
+            filteredData.sort((a, b) => {
+                const valA = (a.midnight === 'Y') ? 1 : 0;
+                const valB = (b.midnight === 'Y') ? 1 : 0;
+                return valB - valA;
+            });
+        } 
+        else if (sortColumn !== -1 && filteredData.length) {
+            filteredData.sort((a,b) => {
+                let valA, valB;
+                switch(sortColumn){ 
+                    case 0: valA = a.plate||''; valB = b.plate||''; break; 
+                    case 1: valA = Number(a.pgvw)||0; valB = Number(b.pgvw)||0; break; 
+                    case 2: valA = a.startDate||''; valB = b.startDate||''; break; 
+                    case 3: valA = a.expiryDate||''; valB = b.expiryDate||''; break; 
+                    case 4: valA = Number(a.vehicleDailyLimit)||0; valB = Number(b.vehicleDailyLimit)||0; break; 
+                    case 5: 
+                        valA = (a.midnight === 'Y') ? 1 : 0;
+                        valB = (b.midnight === 'Y') ? 1 : 0;
+                        break; 
+                    case 6: valA = a.district||''; valB = b.district||''; break; 
+                    case 7: valA = Number(a.districtDailyLimit)||0; valB = Number(b.districtDailyLimit)||0; break; 
+                    case 8: valA = a.createdBy||''; valB = b.createdBy||''; break;
+                    case 9: valA = a.contactPerson||''; valB = b.contactPerson||''; break;
+                    case 10: valA = (a.contactTel !== undefined && a.contactTel !== null) ? a.contactTel.toString() : '';
+                             valB = (b.contactTel !== undefined && b.contactTel !== null) ? b.contactTel.toString() : '';
+                             break;
+                    case 11: valA = a.contactEmail||''; valB = b.contactEmail||''; break;
+                    default: valA=''; valB=''; 
+                }
+                if(sortColumn === 1 || sortColumn === 4 || sortColumn === 7 || sortColumn === 5) {
+                    return sortDirection === 'asc' ? valA - valB : valB - valA;
+                }
+                if(typeof valA ==='string') valA = valA.toLowerCase();
+                if(typeof valB ==='string') valB = valB.toLowerCase();
+                if(valA < valB) return sortDirection === 'asc' ? -1 : 1;
+                if(valA > valB) return sortDirection === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+        
+        currentFilteredDataForPaging = filteredData;
+        currentPage = 1;
+        renderCurrentPageData();
+        updateContactPanel();
     }
-    
-    if (searchTerm) {
-        filteredData = filteredData.filter(v => {
-            const plate = String(v.plate || '').toLowerCase();
-            const district = String(v.district || '').toLowerCase();
-            const createdBy = String(v.createdBy || '').toLowerCase();
-            const contactPerson = String(v.contactPerson || '').toLowerCase();
-            const contactTel = String(v.contactTel || '');
-            const contactEmail = String(v.contactEmail || '').toLowerCase();
-            
-            return plate.includes(searchTerm) || 
-                   district.includes(searchTerm) || 
-                   createdBy.includes(searchTerm) ||
-                   contactPerson.includes(searchTerm) ||
-                   contactTel.includes(searchTerm) ||
-                   contactEmail.includes(searchTerm);
-        });
-    }
-    
-    if (isMidnightTopActive && filteredData.length) {
-        filteredData.sort((a, b) => {
-            const valA = (a.midnight === 'Y') ? 1 : 0;
-            const valB = (b.midnight === 'Y') ? 1 : 0;
-            return valB - valA;
-        });
-    } 
-    else if (sortColumn !== -1 && filteredData.length) {
-        filteredData.sort((a,b) => {
-            let valA, valB;
-            switch(sortColumn){ 
-                case 0: valA = a.plate||''; valB = b.plate||''; break; 
-                case 1: valA = Number(a.pgvw)||0; valB = Number(b.pgvw)||0; break; 
-                case 2: valA = a.startDate||''; valB = b.startDate||''; break; 
-                case 3: valA = a.expiryDate||''; valB = b.expiryDate||''; break; 
-                case 4: valA = Number(a.vehicleDailyLimit)||0; valB = Number(b.vehicleDailyLimit)||0; break; 
-                case 5: 
-                    valA = (a.midnight === 'Y') ? 1 : 0;
-                    valB = (b.midnight === 'Y') ? 1 : 0;
-                    break; 
-                case 6: valA = a.district||''; valB = b.district||''; break; 
-                case 7: valA = Number(a.districtDailyLimit)||0; valB = Number(b.districtDailyLimit)||0; break; 
-                case 8: valA = a.createdBy||''; valB = b.createdBy||''; break;
-                case 9: valA = a.contactPerson||''; valB = b.contactPerson||''; break;
-                case 10: valA = String(a.contactTel || ''); valB = String(b.contactTel || ''); break;
-                case 11: valA = a.contactEmail||''; valB = b.contactEmail||''; break;
-                default: valA=''; valB=''; 
-            }
-            if(sortColumn === 1 || sortColumn === 4 || sortColumn === 7 || sortColumn === 5) {
-                return sortDirection === 'asc' ? valA - valB : valB - valA;
-            }
-            if(typeof valA ==='string') valA = valA.toLowerCase();
-            if(typeof valB ==='string') valB = valB.toLowerCase();
-            if(valA < valB) return sortDirection === 'asc' ? -1 : 1;
-            if(valA > valB) return sortDirection === 'asc' ? 1 : -1;
-            return 0;
-        });
-    }
-    
-    currentFilteredDataForPaging = filteredData;
-    currentPage = 1;
-    renderCurrentPageData();
-    updateContactPanel();
-}
     
     function toggleMidnightTop() {
         isMidnightTopActive = !isMidnightTopActive;
@@ -1408,14 +1412,11 @@
         showLoading(true);
         
         try {
-            // 檢查是否為超級管理員 (WKTS)
             const isAdmin = (currentSession.userId === 'WKTS' || currentSession.role === '超級管理員');
             
             if (isAdmin) {
-                // ========== 超級管理員：匯出全部 6 個工作表 ==========
                 console.log("📤 超級管理員模式：匯出全部 6 個工作表");
                 
-                // 同時獲取所有資料
                 const [vehiclesResult, usersResult, quotasResult, expiredResult, districtQuotaResult, emailResult] = await Promise.all([
                     callAPI('getVehicles'),
                     callAPI('getUserList'),
@@ -1432,7 +1433,6 @@
                 const districtQuota = districtQuotaResult.data || [];
                 const emailList = emailResult.data || [];
                 
-                // 建立工作簿
                 const wb = XLSX.utils.book_new();
                 
                 // 工作表 1: 車輛資料
@@ -1441,7 +1441,8 @@
                     vehiclesSheetData.push([
                         v.plate || "", v.pgvw || "", safeSplitDate(v.startDate), safeSplitDate(v.expiryDate),
                         v.vehicleDailyLimit || 5, v.midnight === 'Y' ? "是" : "否", v.district || "",
-                        v.districtDailyLimit || 0, v.createdBy || "", v.contactPerson || "", v.contactTel || "",
+                        v.districtDailyLimit || 0, v.createdBy || "", v.contactPerson || "", 
+                        v.contactTel !== undefined && v.contactTel !== null ? v.contactTel : "",
                         v.contactEmail || "", v.createdAt ? new Date(v.createdAt).toLocaleString('zh-HK') : "",
                         v.updatedAt ? new Date(v.updatedAt).toLocaleString('zh-HK') : ""
                     ]);
@@ -1452,9 +1453,7 @@
                 // 工作表 2: 用戶資料
                 const usersSheetData = [["用戶ID","角色","所屬區域","可查看區域"]];
                 users.forEach(u => {
-                    usersSheetData.push([
-                        u.id || "", u.role || "", u.district || "", u.viewDistricts || ""
-                    ]);
+                    usersSheetData.push([u.id || "", u.role || "", u.district || "", u.viewDistricts || ""]);
                 });
                 const usersWs = XLSX.utils.aoa_to_sheet(usersSheetData);
                 XLSX.utils.book_append_sheet(wb, usersWs, "用戶資料");
@@ -1479,7 +1478,7 @@
                 const expiredWs = XLSX.utils.aoa_to_sheet(expiredSheetData);
                 XLSX.utils.book_append_sheet(wb, expiredWs, "過期記錄");
                 
-                // 工作表 5: 區域每日上限 (DistrictQuota)
+                // 工作表 5: 區域每日上限
                 const districtQuotaSheetData = [["區域","每日上限"]];
                 districtQuota.forEach(dq => {
                     districtQuotaSheetData.push([dq.district || "", dq.dailyLimit || ""]);
@@ -1498,12 +1497,10 @@
                 const emailWs = XLSX.utils.aoa_to_sheet(emailSheetData);
                 XLSX.utils.book_append_sheet(wb, emailWs, "郵件列表");
                 
-                // 下載檔案
                 XLSX.writeFile(wb, `系統完整備份_${new Date().toISOString().split('T')[0]}.xlsx`);
                 alert(`✅ 已匯出全部 6 個工作表！\n- 車輛資料: ${vehicles.length} 筆\n- 用戶資料: ${users.length} 筆\n- 凌晨配額: ${midnightQuota.length} 筆`);
                 
             } else {
-                // ========== 一般用戶：只匯出自己權限範圍內的車輛 ==========
                 console.log("📤 一般用戶模式：匯出車輛清單");
                 
                 let exportData = currentFilteredDataForPaging;
@@ -1520,7 +1517,8 @@
                         v.plate, v.pgvw, safeSplitDate(v.startDate), safeSplitDate(v.expiryDate),
                         v.vehicleDailyLimit || 5, v.midnight === 'Y' ? "是" : "否", v.district,
                         v.districtDailyLimit || 0, v.createdBy || "", v.contactPerson || "",
-                        v.contactTel || "", v.contactEmail || ""
+                        v.contactTel !== undefined && v.contactTel !== null ? v.contactTel : "",
+                        v.contactEmail || ""
                     ]);
                 });
                 
@@ -1829,24 +1827,6 @@
             showLoading(false); 
         }
     });
-    
-    // 需要新增 Worker 支援的 API（如果還沒有）
-    // 注意：以下 API 需要在 Worker 中實作對應的 action
-    
-    // 獲取過期記錄（需要在 Worker 中加入）
-    async function getExpired() {
-        return await callAPI('getExpired');
-    }
-    
-    // 獲取區域每日上限（需要在 Worker 中加入）
-    async function getDistrictQuota() {
-        return await callAPI('getDistrictQuota');
-    }
-    
-    // 獲取郵件列表（需要在 Worker 中加入）
-    async function getEmailList() {
-        return await callAPI('getEmailList');
-    }
     
     // 註冊全域函數
     window.sortTable = sortTable;
