@@ -676,7 +676,6 @@
     function formatDateToYMD(dateValue) {
         if (!dateValue && dateValue !== 0) return null;
         
-        // 處理 Excel 序列數字 (例如 46219 -> 2026-07-16)
         if (typeof dateValue === 'number') {
             const date = new Date((dateValue - 25569) * 86400 * 1000);
             if (!isNaN(date.getTime())) {
@@ -685,12 +684,10 @@
             return null;
         }
         
-        // 處理 Date 物件
         if (dateValue instanceof Date) {
             return dateValue.toISOString().split('T')[0];
         }
         
-        // 處理字串
         if (typeof dateValue === 'string') {
             if (dateValue.includes('T')) {
                 return dateValue.split('T')[0];
@@ -708,11 +705,14 @@
         return formatted || '-';
     }
     
+    // ======================= 凌晨配額檢查（含超標提示） =======================
     function checkMidnightQuotaViolation(district, setMidnightY, excludePlate, allVehicles) {
         if (setMidnightY !== 'Y') return { allowed: true };
+        
         if (!isDistrictInQuotaTable(district)) {
             return { allowed: false, message: `❌ 區域「${district}」不在凌晨配額管制範圍內` };
         }
+        
         const stdDistrict = standardizeDistrict(district);
         const limit = getDistrictQuotaLimit(stdDistrict);
         if (limit === null) return { allowed: false, message: `❌ 區域「${district}」沒有設定凌晨配額上限` };
@@ -729,7 +729,15 @@
             const existing = allVehicles.find(v => v.plate === excludePlate);
             if (existing && existing.midnight === 'Y') currentCount--;
         }
-        if (currentCount >= limit) return { allowed: false, message: `❌ ${stdDistrict} 凌晨授權車輛已達上限 (${limit}/${limit})` };
+        
+        if (currentCount >= limit) {
+            if (currentCount > limit) {
+                const excess = currentCount - limit;
+                return { allowed: false, message: `❌ ${stdDistrict} 凌晨授權車輛已超標 (${currentCount}/${limit})！\n請先刪除 ${excess} 輛凌晨車輛後再試。` };
+            }
+            return { allowed: false, message: `❌ ${stdDistrict} 凌晨授權車輛已達上限 (${limit}/${limit})` };
+        }
+        
         return { allowed: true };
     }
     
@@ -879,7 +887,6 @@
         
         const today = new Date().toISOString().split('T')[0];
         
-        // 安全計算活躍車輛（支援 Excel 日期數字）
         const activeVehicles = vehiclesList.filter(v => {
             const expiryDateStr = formatDateToYMD(v.expiryDate);
             return expiryDateStr && expiryDateStr >= today;
@@ -910,7 +917,21 @@
             const percent = (used / limit) * 100;
             let barColor = used >= limit ? 'bg-danger' : (used >= limit * 0.8 ? 'bg-warning' : 'bg-success');
             const isActive = (currentSelectedFilterDistrict === district);
-            html += `<div class="col"><div class="card p-2 border-0 shadow-sm quota-card ${isActive ? 'active' : ''}" style="background:#fff9e8; cursor:pointer;" data-district="${district}"><div class="fw-bold">${district}</div><div>🌙 凌晨配額: ${used} / ${limit}</div><div class="progress mt-1" style="height: 6px;"><div class="progress-bar ${barColor}" style="width: ${Math.min(100, percent)}%"></div></div></div></div>`;
+            const isOverLimit = used > limit;
+            const excess = used - limit;
+            
+            html += `<div class="col">
+                <div class="card p-2 border-0 shadow-sm quota-card ${isActive ? 'active' : ''}" 
+                     style="background:#fff9e8; cursor:pointer; ${isOverLimit ? 'border-left: 4px solid #dc3545;' : ''}" 
+                     data-district="${district}">
+                    <div class="fw-bold">${district}${isOverLimit ? ' ⚠️ 超標' : ''}</div>
+                    <div>🌙 凌晨配額: <span class="${isOverLimit ? 'text-danger fw-bold' : ''}">${used}</span> / ${limit}</div>
+                    <div class="progress mt-1" style="height: 6px;">
+                        <div class="progress-bar ${isOverLimit ? 'bg-danger' : barColor}" style="width: ${Math.min(100, percent)}%"></div>
+                    </div>
+                    ${isOverLimit ? `<div class="small text-danger mt-1">⚠️ 超出 ${excess} 輛，請先刪除</div>` : ''}
+                </div>
+            </div>`;
         }
         html += '</div>';
         container.innerHTML = html;
@@ -1349,7 +1370,6 @@
         if(!val) return ""; 
         if(val instanceof Date) return val.toISOString().split('T')[0]; 
         if(typeof val === 'number'){ 
-            // Excel 序列數字轉換 (1900 日期系統)
             const date = new Date((val - 25569) * 86400 * 1000);
             return date.toISOString().split('T')[0];
         } 
@@ -1373,26 +1393,144 @@
         }catch(err){ alert("網路錯誤："+err); } finally{ showLoading(false); } 
     }
     
+    // ======================= 匯出 Excel（支援一般用戶和超級管理員） =======================
     async function exportExcel() {
         if (typeof XLSX === 'undefined') { alert("Excel 處理庫尚未載入"); return; }
-        if(!currentSession) return; 
-        showLoading(true); 
-        try{ 
-            const result = await callAPI('getVehicles');
-            if(result.success && result.data.length){ 
-                const sheetData=[["車牌","PGVW","開始日期","有效日期","車輛每日上限","凌晨授權","區域","區域每日上限","建立者","聯絡人","電話","電郵"]]; 
-                result.data.forEach(v=>{ 
+        if (!currentSession) return;
+        
+        showLoading(true);
+        
+        try {
+            // 檢查是否為超級管理員 (WKTS)
+            const isAdmin = (currentSession.userId === 'WKTS' || currentSession.role === '超級管理員');
+            
+            if (isAdmin) {
+                // ========== 超級管理員：匯出全部 6 個工作表 ==========
+                console.log("📤 超級管理員模式：匯出全部 6 個工作表");
+                
+                // 同時獲取所有資料
+                const [vehiclesResult, usersResult, quotasResult, expiredResult, districtQuotaResult, emailResult] = await Promise.all([
+                    callAPI('getVehicles'),
+                    callAPI('getUserList'),
+                    callAPI('getMidnightQuota'),
+                    callAPI('getExpired'),
+                    callAPI('getDistrictQuota'),
+                    callAPI('getEmailList')
+                ]);
+                
+                const vehicles = vehiclesResult.data || [];
+                const users = usersResult.users || [];
+                const midnightQuota = quotasResult.data || [];
+                const expired = expiredResult.data || [];
+                const districtQuota = districtQuotaResult.data || [];
+                const emailList = emailResult.data || [];
+                
+                // 建立工作簿
+                const wb = XLSX.utils.book_new();
+                
+                // 工作表 1: 車輛資料
+                const vehiclesSheetData = [["車牌","PGVW","開始日期","有效日期","車輛每日上限","凌晨授權","區域","區域每日上限","建立者","聯絡人","電話","電郵","建立時間","更新時間"]];
+                vehicles.forEach(v => {
+                    vehiclesSheetData.push([
+                        v.plate || "", v.pgvw || "", safeSplitDate(v.startDate), safeSplitDate(v.expiryDate),
+                        v.vehicleDailyLimit || 5, v.midnight === 'Y' ? "是" : "否", v.district || "",
+                        v.districtDailyLimit || 0, v.createdBy || "", v.contactPerson || "", v.contactTel || "",
+                        v.contactEmail || "", v.createdAt ? new Date(v.createdAt).toLocaleString('zh-HK') : "",
+                        v.updatedAt ? new Date(v.updatedAt).toLocaleString('zh-HK') : ""
+                    ]);
+                });
+                const vehiclesWs = XLSX.utils.aoa_to_sheet(vehiclesSheetData);
+                XLSX.utils.book_append_sheet(wb, vehiclesWs, "車輛資料");
+                
+                // 工作表 2: 用戶資料
+                const usersSheetData = [["用戶ID","角色","所屬區域","可查看區域"]];
+                users.forEach(u => {
+                    usersSheetData.push([
+                        u.id || "", u.role || "", u.district || "", u.viewDistricts || ""
+                    ]);
+                });
+                const usersWs = XLSX.utils.aoa_to_sheet(usersSheetData);
+                XLSX.utils.book_append_sheet(wb, usersWs, "用戶資料");
+                
+                // 工作表 3: 凌晨配額
+                const quotaSheetData = [["區域","凌晨上限"]];
+                midnightQuota.forEach(q => {
+                    quotaSheetData.push([q.district || "", q.limit || ""]);
+                });
+                const quotaWs = XLSX.utils.aoa_to_sheet(quotaSheetData);
+                XLSX.utils.book_append_sheet(wb, quotaWs, "凌晨配額");
+                
+                // 工作表 4: 過期記錄
+                const expiredSheetData = [["車牌","過期日期","區域","狀態","已通知","通知日期","刪除者","刪除時間"]];
+                expired.forEach(e => {
+                    expiredSheetData.push([
+                        e.plate || "", safeSplitDate(e.expiryDate), e.district || "", e.status || "",
+                        e.notified ? "是" : "否", e.notifiedDate ? safeSplitDate(e.notifiedDate) : "",
+                        e.deletedBy || "", e.deletedAt ? new Date(e.deletedAt).toLocaleString('zh-HK') : ""
+                    ]);
+                });
+                const expiredWs = XLSX.utils.aoa_to_sheet(expiredSheetData);
+                XLSX.utils.book_append_sheet(wb, expiredWs, "過期記錄");
+                
+                // 工作表 5: 區域每日上限 (DistrictQuota)
+                const districtQuotaSheetData = [["區域","每日上限"]];
+                districtQuota.forEach(dq => {
+                    districtQuotaSheetData.push([dq.district || "", dq.dailyLimit || ""]);
+                });
+                const districtQuotaWs = XLSX.utils.aoa_to_sheet(districtQuotaSheetData);
+                XLSX.utils.book_append_sheet(wb, districtQuotaWs, "區域每日上限");
+                
+                // 工作表 6: 郵件列表
+                const emailSheetData = [["電子郵件","姓名","角色","區域","通知類型","過期通知","配額通知","啟用"]];
+                emailList.forEach(e => {
+                    emailSheetData.push([
+                        e.email || "", e.name || "", e.role || "", e.district || "", e.notifyType || "",
+                        e.notifyExpired ? "是" : "否", e.notifyQuota ? "是" : "否", e.active ? "是" : "否"
+                    ]);
+                });
+                const emailWs = XLSX.utils.aoa_to_sheet(emailSheetData);
+                XLSX.utils.book_append_sheet(wb, emailWs, "郵件列表");
+                
+                // 下載檔案
+                XLSX.writeFile(wb, `系統完整備份_${new Date().toISOString().split('T')[0]}.xlsx`);
+                alert(`✅ 已匯出全部 6 個工作表！\n- 車輛資料: ${vehicles.length} 筆\n- 用戶資料: ${users.length} 筆\n- 凌晨配額: ${midnightQuota.length} 筆`);
+                
+            } else {
+                // ========== 一般用戶：只匯出自己權限範圍內的車輛 ==========
+                console.log("📤 一般用戶模式：匯出車輛清單");
+                
+                let exportData = currentFilteredDataForPaging;
+                
+                if (!exportData || exportData.length === 0) {
+                    alert("無資料可匯出");
+                    showLoading(false);
+                    return;
+                }
+                
+                const sheetData = [["車牌","PGVW","開始日期","有效日期","車輛每日上限","凌晨授權","區域","區域每日上限","建立者","聯絡人","電話","電郵"]];
+                exportData.forEach(v => {
                     sheetData.push([
-                        v.plate, v.pgvw, safeSplitDate(v.startDate), safeSplitDate(v.expiryDate), 
-                        v.vehicleDailyLimit||5, v.midnight==='Y'?"是":"否", v.district, v.districtDailyLimit||0, 
-                        v.createdBy||"", v.contactPerson||"", v.contactTel||"", v.contactEmail||""
-                    ]); 
-                }); 
-                const ws=XLSX.utils.aoa_to_sheet(sheetData); const wb=XLSX.utils.book_new(); 
-                XLSX.utils.book_append_sheet(wb,ws,"車輛清單"); 
-                XLSX.writeFile(wb,`車輛清單_${new Date().toISOString().split('T')[0]}.xlsx`); 
-            } else { alert("無資料可匯出"); } 
-        } catch(err){ alert("匯出失敗："+err); } finally{ showLoading(false); } 
+                        v.plate, v.pgvw, safeSplitDate(v.startDate), safeSplitDate(v.expiryDate),
+                        v.vehicleDailyLimit || 5, v.midnight === 'Y' ? "是" : "否", v.district,
+                        v.districtDailyLimit || 0, v.createdBy || "", v.contactPerson || "",
+                        v.contactTel || "", v.contactEmail || ""
+                    ]);
+                });
+                
+                const ws = XLSX.utils.aoa_to_sheet(sheetData);
+                const wb = XLSX.utils.book_new();
+                const areaName = currentUserViewDistricts === 'all' ? '全區' : currentUserViewDistricts.join('_');
+                XLSX.utils.book_append_sheet(wb, ws, `${areaName}車輛清單`);
+                XLSX.writeFile(wb, `${areaName}_車輛清單_${new Date().toISOString().split('T')[0]}.xlsx`);
+                alert(`✅ 已匯出 ${exportData.length} 筆車輛資料`);
+            }
+            
+        } catch(err) {
+            console.error("匯出錯誤:", err);
+            alert("匯出失敗：" + err.message);
+        } finally {
+            showLoading(false);
+        }
     }
     
     function downloadFEHDTemplate() {
@@ -1684,6 +1822,24 @@
             showLoading(false); 
         }
     });
+    
+    // 需要新增 Worker 支援的 API（如果還沒有）
+    // 注意：以下 API 需要在 Worker 中實作對應的 action
+    
+    // 獲取過期記錄（需要在 Worker 中加入）
+    async function getExpired() {
+        return await callAPI('getExpired');
+    }
+    
+    // 獲取區域每日上限（需要在 Worker 中加入）
+    async function getDistrictQuota() {
+        return await callAPI('getDistrictQuota');
+    }
+    
+    // 獲取郵件列表（需要在 Worker 中加入）
+    async function getEmailList() {
+        return await callAPI('getEmailList');
+    }
     
     // 註冊全域函數
     window.sortTable = sortTable;
