@@ -1187,73 +1187,80 @@
     }
     
     function filterTable() { 
-        const searchTerm = document.getElementById('searchInput')?.value.toLowerCase() || ''; 
-        let filteredData = [...vehiclesData];
-        
-        if (currentUserViewDistricts !== 'all' && Array.isArray(currentUserViewDistricts) && currentUserViewDistricts.length > 0) {
-            filteredData = filteredData.filter(v => {
-                const stdVehicleDistrict = standardizeDistrict(v.district);
-                return currentUserViewDistricts.some(userDistrict => 
-                    standardizeDistrict(userDistrict) === stdVehicleDistrict
-                );
-            });
-        }
-        
-        if (searchTerm) {
-            filteredData = filteredData.filter(v => 
-                (v.plate && v.plate.toLowerCase().includes(searchTerm)) || 
-                (v.district && v.district.toLowerCase().includes(searchTerm)) || 
-                (v.createdBy && v.createdBy.toLowerCase().includes(searchTerm)) ||
-                (v.contactPerson && v.contactPerson.toLowerCase().includes(searchTerm)) ||
-                (v.contactTel && v.contactTel.includes(searchTerm)) ||
-                (v.contactEmail && v.contactEmail.toLowerCase().includes(searchTerm))
+    const searchTerm = document.getElementById('searchInput')?.value.toLowerCase() || ''; 
+    let filteredData = [...vehiclesData];
+    
+    if (currentUserViewDistricts !== 'all' && Array.isArray(currentUserViewDistricts) && currentUserViewDistricts.length > 0) {
+        filteredData = filteredData.filter(v => {
+            const stdVehicleDistrict = standardizeDistrict(v.district);
+            return currentUserViewDistricts.some(userDistrict => 
+                standardizeDistrict(userDistrict) === stdVehicleDistrict
             );
-        }
-        
-        if (isMidnightTopActive && filteredData.length) {
-            filteredData.sort((a, b) => {
-                const valA = (a.midnight === 'Y') ? 1 : 0;
-                const valB = (b.midnight === 'Y') ? 1 : 0;
-                return valB - valA;
-            });
-        } 
-        else if (sortColumn !== -1 && filteredData.length) {
-            filteredData.sort((a,b) => {
-                let valA, valB;
-                switch(sortColumn){ 
-                    case 0: valA = a.plate||''; valB = b.plate||''; break; 
-                    case 1: valA = Number(a.pgvw)||0; valB = Number(b.pgvw)||0; break; 
-                    case 2: valA = a.startDate||''; valB = b.startDate||''; break; 
-                    case 3: valA = a.expiryDate||''; valB = b.expiryDate||''; break; 
-                    case 4: valA = Number(a.vehicleDailyLimit)||0; valB = Number(b.vehicleDailyLimit)||0; break; 
-                    case 5: 
-                        valA = (a.midnight === 'Y') ? 1 : 0;
-                        valB = (b.midnight === 'Y') ? 1 : 0;
-                        break; 
-                    case 6: valA = a.district||''; valB = b.district||''; break; 
-                    case 7: valA = Number(a.districtDailyLimit)||0; valB = Number(b.districtDailyLimit)||0; break; 
-                    case 8: valA = a.createdBy||''; valB = b.createdBy||''; break;
-                    case 9: valA = a.contactPerson||''; valB = b.contactPerson||''; break;
-                    case 10: valA = a.contactTel||''; valB = b.contactTel||''; break;
-                    case 11: valA = a.contactEmail||''; valB = b.contactEmail||''; break;
-                    default: valA=''; valB=''; 
-                }
-                if(sortColumn === 1 || sortColumn === 4 || sortColumn === 7 || sortColumn === 5) {
-                    return sortDirection === 'asc' ? valA - valB : valB - valA;
-                }
-                if(typeof valA ==='string') valA = valA.toLowerCase();
-                if(typeof valB ==='string') valB = valB.toLowerCase();
-                if(valA < valB) return sortDirection === 'asc' ? -1 : 1;
-                if(valA > valB) return sortDirection === 'asc' ? 1 : -1;
-                return 0;
-            });
-        }
-        
-        currentFilteredDataForPaging = filteredData;
-        currentPage = 1;
-        renderCurrentPageData();
-        updateContactPanel();
+        });
     }
+    
+    if (searchTerm) {
+        filteredData = filteredData.filter(v => {
+            const plate = String(v.plate || '').toLowerCase();
+            const district = String(v.district || '').toLowerCase();
+            const createdBy = String(v.createdBy || '').toLowerCase();
+            const contactPerson = String(v.contactPerson || '').toLowerCase();
+            const contactTel = String(v.contactTel || '');
+            const contactEmail = String(v.contactEmail || '').toLowerCase();
+            
+            return plate.includes(searchTerm) || 
+                   district.includes(searchTerm) || 
+                   createdBy.includes(searchTerm) ||
+                   contactPerson.includes(searchTerm) ||
+                   contactTel.includes(searchTerm) ||
+                   contactEmail.includes(searchTerm);
+        });
+    }
+    
+    if (isMidnightTopActive && filteredData.length) {
+        filteredData.sort((a, b) => {
+            const valA = (a.midnight === 'Y') ? 1 : 0;
+            const valB = (b.midnight === 'Y') ? 1 : 0;
+            return valB - valA;
+        });
+    } 
+    else if (sortColumn !== -1 && filteredData.length) {
+        filteredData.sort((a,b) => {
+            let valA, valB;
+            switch(sortColumn){ 
+                case 0: valA = a.plate||''; valB = b.plate||''; break; 
+                case 1: valA = Number(a.pgvw)||0; valB = Number(b.pgvw)||0; break; 
+                case 2: valA = a.startDate||''; valB = b.startDate||''; break; 
+                case 3: valA = a.expiryDate||''; valB = b.expiryDate||''; break; 
+                case 4: valA = Number(a.vehicleDailyLimit)||0; valB = Number(b.vehicleDailyLimit)||0; break; 
+                case 5: 
+                    valA = (a.midnight === 'Y') ? 1 : 0;
+                    valB = (b.midnight === 'Y') ? 1 : 0;
+                    break; 
+                case 6: valA = a.district||''; valB = b.district||''; break; 
+                case 7: valA = Number(a.districtDailyLimit)||0; valB = Number(b.districtDailyLimit)||0; break; 
+                case 8: valA = a.createdBy||''; valB = b.createdBy||''; break;
+                case 9: valA = a.contactPerson||''; valB = b.contactPerson||''; break;
+                case 10: valA = String(a.contactTel || ''); valB = String(b.contactTel || ''); break;
+                case 11: valA = a.contactEmail||''; valB = b.contactEmail||''; break;
+                default: valA=''; valB=''; 
+            }
+            if(sortColumn === 1 || sortColumn === 4 || sortColumn === 7 || sortColumn === 5) {
+                return sortDirection === 'asc' ? valA - valB : valB - valA;
+            }
+            if(typeof valA ==='string') valA = valA.toLowerCase();
+            if(typeof valB ==='string') valB = valB.toLowerCase();
+            if(valA < valB) return sortDirection === 'asc' ? -1 : 1;
+            if(valA > valB) return sortDirection === 'asc' ? 1 : -1;
+            return 0;
+        });
+    }
+    
+    currentFilteredDataForPaging = filteredData;
+    currentPage = 1;
+    renderCurrentPageData();
+    updateContactPanel();
+}
     
     function toggleMidnightTop() {
         isMidnightTopActive = !isMidnightTopActive;
